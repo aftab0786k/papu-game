@@ -1,8 +1,8 @@
-// Papu.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Card from "./Card";
 import AllImages from "./AllImages";
 import Swal from "sweetalert2";
+import "./Papu.css";
 
 const images = [
   "butterfly.jpg", "cow.jpg", "football.jpg", "spin.jpg", "flower.webp",
@@ -31,33 +31,13 @@ const Papu = () => {
   const [cards, setCards] = useState([]);
   const [betAmount, setBetAmount] = useState(10);
   const [balance, setBalance] = useState(100);
-  const [isScratching, setIsScratching] = useState(false);
   const [selectedImages, setSelectedImages] = useState([]);
   const [timer, setTimer] = useState(15);
   const [isTimerActive, setIsTimerActive] = useState(true);
   const [betPlaced, setBetPlaced] = useState(false);
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  useEffect(() => {
-    initializeGame();
-  }, []);
-
-  useEffect(() => {
-    let interval;
-    if (isTimerActive && timer > 0) {
-      interval = setInterval(() => {
-        setTimer((prev) => prev - 1);
-      }, 1000);
-    } else if (timer === 0) {
-      setIsTimerActive(false);
-      if (selectedImages.length > 0) {
-        Swal.fire("Bet Accepted", "Your bet has been placed!", "success");
-      }
-    }
-    return () => clearInterval(interval);
-  }, [isTimerActive, timer, selectedImages.length]);
-
-  const initializeGame = () => {
+  const initializeGame = useCallback(() => {
     setCards(Array.from({ length: 36 }, (_, index) => ({
       id: index,
       scratched: false,
@@ -67,21 +47,134 @@ const Papu = () => {
     setIsTimerActive(true);
     setSelectedImages([]);
     setBetPlaced(false);
-    setCurrentCardIndex(0);
     setHighlightedImages([]);
     setWinningPointOfUser([]);
+    setIsProcessing(false);
+  }, []);
+
+  useEffect(() => {
+    initializeGame();
+  }, [initializeGame]);
+
+  const showPremiumPopup = (config) => {
+    return Swal.fire({
+      ...config,
+      customClass: {
+        popup: `${config.gradient} p-1 rounded-2xl shadow-2xl`,
+        container: 'backdrop-blur-sm',
+        title: 'text-white',
+        htmlContainer: 'text-white'
+      },
+      background: 'transparent',
+      showConfirmButton: false,
+      timer: 2000
+    });
   };
 
-  const handleFlip = (cardId) => {
-    if (isScratching || !isTimerActive) return;
+  const handlePlay = useCallback(async () => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+
+    const totalBet = betAmount * selectedImages.length;
+    
+    if (!betPlaced) {
+      if (selectedImages.length > 0 && balance < totalBet) {
+        await showPremiumPopup({
+          title: '<div class="text-4xl">⚠️</div>',
+          html: `<div class="space-y-2 text-center text-white">
+            <div class="text-xl font-bold">Insufficient Balance!</div>
+            <div class="text-sm opacity-75">Need ₹${totalBet - balance} more</div>
+          </div>`,
+          gradient: 'bg-gradient-to-br from-red-600 via-rose-500 to-pink-600'
+        });
+        setIsProcessing(false);
+        return;
+      }
+      
+      await showPremiumPopup({
+        html: `<div class="space-y-4 text-center text-white">
+          <div class="animate-bounce text-4xl">🎰</div>
+          <div class="text-xl font-bold">₹${totalBet} Bet Placed!</div>
+          <div class="text-sm opacity-75">Good Luck! 🍀</div>
+        </div>`,
+        gradient: 'bg-gradient-to-br from-green-600 via-emerald-500 to-cyan-500'
+      });
+
+      if (selectedImages.length > 0) {
+        setBalance(prev => prev - totalBet);
+      }
+      setBetPlaced(true);
+    }
+
+    const nextCard = cards.find(card => !card.scratched);
+    if (!nextCard) {
+      await showPremiumPopup({
+        title: '<div class="text-4xl">🏁</div>',
+        html: `<div class="space-y-2 text-center text-white">
+          <div class="text-xl font-bold">Game Over!</div>
+          <div class="text-sm opacity-75">Final Balance: ₹${balance}</div>
+        </div>`,
+        gradient: 'bg-gradient-to-br from-purple-600 via-indigo-500 to-blue-500'
+      });
+      initializeGame();
+      setIsProcessing(false);
+      return;
+    }
+
     const randomImage = images[Math.floor(Math.random() * images.length)];
     setCards(prev => prev.map(c => 
-      c.id === cardId ? {...c, scratched: true, revealedImage: randomImage} : c
+      c.id === nextCard.id ? {...c, scratched: true, revealedImage: randomImage} : c
     ));
-  };
+
+    setTimeout(async () => {
+      const isMatch = selectedImages.includes(randomImage);
+      let winnings = 0;
+      
+      if (isMatch) {
+        winnings = betAmount * 10;
+        setBalance(prev => prev + winnings);
+        setHighlightedImages(prev => [...new Set([...prev, randomImage])]);
+        setWinningPointOfUser(prev => [...prev, 10]);
+      }
+
+      await showPremiumPopup({
+        html: `<div class="space-y-4 text-center text-white">
+          <div class="text-4xl">${isMatch ? '🎉' : '😢'}</div>
+          <div class="bg-white/10 p-2 rounded-xl backdrop-blur-sm">
+            <img src="/${randomImage}" class="h-20 mx-auto rounded-lg"/>
+          </div>
+          <div class="text-xl font-bold">${isMatch ? 'You Won!' : 'Try Again!'}</div>
+          <div class="text-sm">${isMatch ? `₹${winnings} Added!` : 'Better luck next time!'}</div>
+          ${isMatch ? `<div class="bg-gradient-to-r from-amber-400 to-orange-500 px-3 py-1 rounded-full text-xs">
+            +10 Points
+          </div>` : ''}
+        </div>`,
+        gradient: isMatch ? 
+          'bg-gradient-to-br from-green-600 via-emerald-500 to-cyan-500' :
+          'bg-gradient-to-br from-red-600 via-rose-500 to-pink-500'
+      });
+
+      setTimer(15);
+      setIsTimerActive(true);
+      setSelectedImages([]);
+      setBetPlaced(false);
+      setIsProcessing(false);
+    }, 1000);
+  }, [isProcessing, selectedImages, betPlaced, balance, betAmount, cards, initializeGame]);
+
+  useEffect(() => {
+    let interval;
+    if (isTimerActive && timer > 0) {
+      interval = setInterval(() => setTimer(t => t - 1), 1000);
+    } else if (timer === 0 && !isProcessing) {
+      setIsTimerActive(false);
+      handlePlay();
+    }
+    return () => clearInterval(interval);
+  }, [isTimerActive, timer, isProcessing, handlePlay]);
 
   const toggleImageSelection = (image) => {
-    if (!isTimerActive) return;
+    if (!isTimerActive || isProcessing) return;
     setSelectedImages(prev => {
       if (prev.includes(image)) {
         return prev.filter(img => img !== image);
@@ -91,143 +184,80 @@ const Papu = () => {
     });
   };
 
-  const handlePlay = async () => {
-    if (isScratching || !selectedImages.length || isTimerActive) return;
-    
-    const totalBet = betAmount * selectedImages.length;
-    
-    if (!betPlaced) {
-      if (balance < totalBet) {
-        Swal.fire("Insufficient Balance", "Add more funds!", "error");
-        return;
-      }
-      setBalance(prev => prev - totalBet);
-      setBetPlaced(true);
-    }
-
-    setIsScratching(true);
-
-    const allScratched = cards.every(c => c.scratched);
-    if (allScratched) {
-      Swal.fire("Game Over", "All cards have been revealed!", "info")
-        .then(() => {
-          initializeGame();
-          setIsTimerActive(true);
-        });
-      setIsScratching(false);
-      return;
-    }
-
-    let nextIndex = -1;
-    for (let i = 0; i < cards.length; i++) {
-      const idx = (currentCardIndex + i) % cards.length;
-      if (!cards[idx].scratched) {
-        nextIndex = idx;
-        break;
-      }
-    }
-
-    if (nextIndex === -1) {
-      Swal.fire("Game Over", "All cards have been revealed!", "info")
-        .then(() => {
-          initializeGame();
-          setIsTimerActive(true);
-        });
-      setIsScratching(false);
-      return;
-    }
-
-    const randomImage = images[Math.floor(Math.random() * images.length)];
-    
-    setCards(prev => prev.map(c => 
-      c.id === nextIndex ? {...c, scratched: true, revealedImage: randomImage} : c
-    ));
-
-    setCurrentCardIndex((nextIndex + 1) % cards.length);
-
-    const isMatch = selectedImages.includes(randomImage);
-    let totalWinnings = 0;
-    if (isMatch) {
-      totalWinnings = betAmount * 10;
-      setBalance(prev => prev + totalWinnings);
-      setWinningPointOfUser(prev => [...prev, 10]);
-      setHighlightedImages(prev => [...new Set([...prev, randomImage])]);
-    }
-
-    Swal.fire({
-      title: isMatch ? "🎉 You Win!" : "❌ Try Again!",
-      text: isMatch ? `Won ₹${totalWinnings}!` : "No matching image found!",
-      imageUrl: `/${randomImage}`,
-      imageHeight: 100,
-      imageAlt: 'Revealed Image',
-    }).then(() => {
-      setIsTimerActive(true);
-      setTimer(15);
-      setSelectedImages([]);
-      setBetPlaced(false);
-    });
-
-    setIsScratching(false);
-  };
-
-  const totalPoints = winningPointOfUser.reduce((acc, val) => acc + val, 0);
-
   return (
-    <div className="flex flex-col items-center min-h-screen bg-green-900 p-4">
-      <h1 className="text-3xl font-bold text-yellow-300 mb-4">
-        PAPPU Playing Features
+    <div className="flex flex-col items-center min-h-screen bg-gradient-to-br from-green-900 to-emerald-900 p-4">
+      <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-300 to-yellow-500 mb-8 animate-pulse">
+      Pappu Game
       </h1>
 
-      <div className="w-full max-w-sm bg-gray-800 p-4 rounded-lg shadow-lg">
-        <div className="grid grid-cols-6 gap-2 md:gap-4">
-          {cards.map((card) => (
-            <Card
-              key={card.id}
-              card={card}
-              isScratched={card.scratched}
-              revealedImage={card.revealedImage}
-              handleFlip={() => handleFlip(card.id)}
-            />
-          ))}
+      {/* Game Board */}
+      <div className="w-full max-w-lg bg-gradient-to-br from-gray-800 to-gray-900 p-1 rounded-2xl shadow-2xl mb-8">
+        <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl p-4">
+          <div className="grid grid-cols-6 gap-2">
+            {cards.map((card) => (
+              <Card
+                key={card.id}
+                card={card}
+                isScratched={card.scratched}
+                revealedImage={card.revealedImage}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="w-full max-w-md bg-gray-900 p-4 mt-4 rounded-lg shadow-lg text-center flex flex-col items-center gap-4">
-        <div className="flex justify-around w-full">
-          <div className="text-white text-lg font-bold">Balance: ₹{balance}</div>
-          <div>
-            <label className="text-white mr-2">Bet Amount:</label>
-            <select
-              className="px-4 bg-white border rounded text-black"
-              value={betAmount}
-              onChange={(e) => setBetAmount(parseInt(e.target.value))}
-            >
-              <option value={10}>₹10</option>
-              <option value={15}>₹15</option>
-              <option value={20}>₹20</option>
-              <option value={50}>₹50</option>
-            </select>
+      {/* Control Panel */}
+      <div className="w-full max-w-md bg-gradient-to-br from-gray-800 to-gray-900 p-1 rounded-2xl shadow-2xl">
+        <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl p-6 space-y-6">
+          {/* Balance & Timer */}
+          <div className="flex justify-between items-center">
+            <div className="text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-cyan-400 font-bold">
+              <h4>Balance</h4>
+              ₹{balance}
+            </div>
+            <div className="flex flex-col items-center  gap-2">
+              <h4  className="text-blue-400">Bet Amount</h4>
+              <select
+                className="bg-gradient-to-br from-gray-700 to-gray-800 px-4 py-2 rounded-lg text-blue-400 font-semibold border border-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                value={betAmount}
+                onChange={(e) => setBetAmount(parseInt(e.target.value))}
+                disabled={!isTimerActive || isProcessing}
+              >
+                <option value={10}>₹10</option>
+                <option value={15}>₹15</option>
+                <option value={20}>₹20</option>
+                <option value={50}>₹50</option>
+              </select>
+            </div>
+            <div className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400 font-bold">
+              <h4>Timer </h4>
+              {timer}s
+            </div>
           </div>
-          <div className="text-white text-lg font-bold">
-            Time Left: {timer}s
+
+          {/* Status Indicator */}
+          <div className="text-center">
+            <div className={`text-sm font-semibold ${
+              isTimerActive ? 
+                'text-green-400 animate-pulse' : 
+                'text-rose-400'
+            }`}>
+              {isProcessing ? 'Processing...' : 
+               isTimerActive ? 'Select Images!' : 
+               'Round Ending...'}
+            </div>
           </div>
         </div>
-        <button 
-          onClick={handlePlay}
-          disabled={isScratching || selectedImages.length === 0 || isTimerActive}
-          className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isScratching ? "Revealing..." : "Play"}
-        </button>
       </div>
 
+      {/* Images Selection */}
       <AllImages
         allWinningImages={allWinningImages}
         highlightedImages={highlightedImages}
         selectedImages={selectedImages}
         betAmount={betAmount}
         onImageClick={toggleImageSelection}
-        isTimerActive={isTimerActive}
+        isTimerActive={isTimerActive && !isProcessing}
       />
     </div>
   );
